@@ -6,9 +6,9 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 import cv2
-from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
 from PIL import Image
+import albumentations as aug
 
 from src.augmentation import make_transform
 from src.config import Config
@@ -92,6 +92,19 @@ def extract_labels_and_filenames(data):
     return zip(*[(filename, row['truth_label'].iloc[0]) for filename, row in data.groupby('filename')])
 
 
+def cv2_augment():
+    transform = aug.Compose([
+        aug.HorizontalFlip(p=0.25),
+        aug.VerticalFlip(p=0.25),
+        aug.GaussNoise(p=0.15),
+        aug.GaussianBlur(p=0.15),
+        aug.RandomBrightnessContrast(p=0.2),
+        aug.RandomShadow(p=0.2),
+        aug.RandomRain(p=0.2)
+    ], p=1)
+    return transform
+
+
 class DataGenerator(tf.keras.utils.Sequence):
     'Generates data for Keras'
     def __init__(self, data, config, batch_size=32, augment=True):
@@ -117,21 +130,28 @@ class DataGenerator(tf.keras.utils.Sequence):
         batch_filenames = self.filenames[index*self.batch_size:(index+1)*self.batch_size]
         batch_images = [self.preprocess_image(name) for name in batch_filenames]
 
-        return np.array(batch_images), np.array(to_categorical(batch_ys)).astype('float32')
+        return np.array(batch_images), np.array(batch_ys).astype('float32')
 
     def preprocess_image(self, name):
         image = cv2.imread(f'{self.config.extract_path}/Images/{name}')
-        image = Image.fromarray(image)
+        aug_object = cv2_augment()
+        transformed_image = aug_object(image=image)['image']
+
+        processed_image = self.pytorch_transforms(transformed_image)
+        return cv2.resize(processed_image, (self.config.im_dim, self.config.im_dim))
+
+    def pytorch_transforms(self, transformed_image):
+        image = Image.fromarray(transformed_image)
         processed_image = self.transform(image)
         processed_image = processed_image.cpu().detach().numpy()
         processed_image = np.moveaxis(processed_image, 0, -1)
-        return cv2.resize(processed_image, (299, 299))
+        return processed_image
 
 
 def create_data_generators(cfg, augment=True):
     dataloader = DataDownloader(cfg)
 
-    train_generator = DataGenerator(dataloader.train, cfg, 256, augment=True if augment else False)
-    val_generator   = DataGenerator(dataloader.val, cfg, 512, augment=True if augment else False)
-    test_generator  = DataGenerator(dataloader.test, cfg, 512, augment=False)
+    train_generator = DataGenerator(dataloader.train, cfg, 32, augment=True if augment else False)
+    val_generator   = DataGenerator(dataloader.val, cfg, 32, augment=True if augment else False)
+    test_generator  = DataGenerator(dataloader.test, cfg, 32, augment=False)
     return train_generator, val_generator, test_generator

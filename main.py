@@ -1,84 +1,60 @@
-import matplotlib.pyplot as plt
-import tensorflow as tf
-from tensorflow.keras import Model
-
+import sklearn
 from src.config import Config
+from src.model_structure import classify_build_conv, derived_from_inception_model
 from src.prepare_data import create_data_generators
-from tensorflow.keras.applications.inception_v3 import InceptionV3
-from tensorflow.keras.layers import Dense
-import numpy as np
+import json
 
 cfg = Config()
+
+def get_truth_and_predictions(generator):
+    y_pred = []
+    y_true = []
+    for batch_no in range(generator.__len__()):
+        x, y = generator.__getitem__(batch_no)
+        y_pred += [pred > 0.5 for pred in model.predict(x)]
+        y_true += list(y)
+    return y_true, y_pred
+
+
+def get_accuracy_precision_recall_f1(y_true, y_pred, dataset='train'):
+    metrics['num_samples'] = len(y_true)
+    metrics[f'{dataset}_accuracy'] = sklearn.metrics.accuracy_score(y_true, y_pred)
+    metrics[f'{dataset}_precision'] = sklearn.metrics.precision_score(y_true, y_pred)
+    metrics[f'{dataset}_recall'] = sklearn.metrics.recall_score(y_true, y_pred)
+    metrics[f'{dataset}_f1score'] = sklearn.metrics.f1_score(y_true, y_pred)
+
+
+def save_model_history_metrics(model, training_history, metrics, model_name):
+    model.save(f'./saved_models/{model_name}_weights.h5')
+    history_dict = training_history.history
+    json.dump(history_dict, open(f'./saved_models/{model_name}_history.json', 'w'))
+    json.dump(metrics, open(f'./saved_models/{model_name}_results.json', 'w'))
+
 
 if __name__ == '__main__':
     train_generator, val_generator, test_generator = create_data_generators(cfg)
 
-    base_model = InceptionV3(weights='imagenet', include_top=True)
-    output1 = Dense(512, activation='relu')(base_model.output)
-    # output1 = Dense(128, activation='relu')(output1)
-    # output1 = Dense(32, activation='relu')(output1)
-    output4 = Dense(2, activation='softmax')(output1)
+    custom_model = classify_build_conv()
+    inceptionv3 = derived_from_inception_model()
 
-    model = Model(inputs=base_model.input, outputs=output4, name='vehicle_classifier')
-    model.compile(optimizer='adam', loss=tf.keras.losses.BinaryCrossentropy(), metrics=['categorical_accuracy'])
-    training_history = model.fit(train_generator, validation_data=val_generator, shuffle=True, verbose=1, epochs=18)
-    model.save('./saved_models/model_new_aug.h5')
-    #model = keras.models.load_model('./saved_models/model.h5')
-    #model.evaluate(test_generator)
+    models_to_train = [custom_model, inceptionv3]
 
-    train_generator, val_generator, test_generator = create_data_generators(cfg, augment=False)
+    for model, model_name in zip(models_to_train, ['custom', 'inception']):
+        training_history = model.fit(train_generator, validation_data=val_generator, shuffle=False, verbose=1, epochs=25,
+                                     use_multiprocessing=False)
 
-    y_pred = []
-    y_true = []
-    for batch_no in range(test_generator.__len__()):
-        x, y = test_generator.__getitem__(batch_no)
-        y_pred += list(np.argmax(model.predict(x), axis=1))
-        print(np.unique(y_pred, return_counts=True))
-        y_true += list(np.argmax(y, axis=1))
+        train_generator, val_generator, test_generator = create_data_generators(cfg, augment=False)
 
-        for idx, image in enumerate(x):
-            if np.random.choice(100) == 5:
-                plt.imshow(image)
-                plt.title(f'Predicted {y_pred[idx]} -  {y_true[idx]} Actual')
-                plt.show()
+        train_true, train_pred = get_truth_and_predictions(train_generator)
+        val_true, val_pred = get_truth_and_predictions(val_generator)
+        test_true, test_pred = get_truth_and_predictions(test_generator)
 
-    print(f'Test Accuracy: {sum(np.array(y_pred) == np.array(y_true))/len(y_true)}')
+        metrics = {}
+        get_accuracy_precision_recall_f1(train_true, train_pred, dataset='train')
+        get_accuracy_precision_recall_f1(val_true, val_pred, dataset='val')
+        get_accuracy_precision_recall_f1(test_true, test_pred, dataset='test')
 
-    y_pred = []
-    y_true = []
-    for batch_no in range(train_generator.__len__()):
-        x, y = train_generator.__getitem__(batch_no)
-        y_pred += list(np.argmax(model.predict(x), axis=1))
-        y_true += list(np.argmax(y, axis=1))
-        print(np.unique(y_pred, return_counts=True))
+        save_model_history_metrics(model, training_history, metrics, model_name=model_name)
 
-        for idx, image in enumerate(x):
-            if np.random.choice(100) == 5:
-                plt.imshow(image)
-                plt.title(f'Predicted {y_pred[idx]} -  {y_true[idx]} Actual')
-                plt.show()
 
-    print(f'Train Accuracy: {sum(np.array(y_pred) == np.array(y_true))/len(y_true)}')
 
-    y_pred = []
-    y_true = []
-    for batch_no in range(val_generator.__len__()):
-        x, y = val_generator.__getitem__(batch_no)
-        y_pred += list(np.argmax(model.predict(x), axis=1))
-        y_true += list(np.argmax(y, axis=1))
-        print(np.unique(y_pred, return_counts=True))
-
-        for idx, image in enumerate(x):
-            if np.random.choice(100) == 5:
-                plt.imshow(image)
-                plt.title(f'Predicted {y_pred[idx]} -  {y_true[idx]} Actual')
-                plt.show()
-
-    print(f'Val Accuracy: {sum(np.array(y_pred) == np.array(y_true)) / len(y_true)}')
-
-    import json
-
-    # Get the dictionary containing each metric and the loss for each epoch
-    history_dict = training_history.history
-    # Save it under the form of a json file
-    json.dump(history_dict, open('./saved_models/history.json', 'w'))
