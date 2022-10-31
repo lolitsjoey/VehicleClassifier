@@ -1,8 +1,6 @@
-import torchvision
 from torchvision import transforms
 import PIL.Image
 import torch
-import random
 
 
 def std_per_channel(images):

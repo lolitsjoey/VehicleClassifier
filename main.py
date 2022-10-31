@@ -1,12 +1,11 @@
 import matplotlib.pyplot as plt
-from keras import Model, Input
+import tensorflow as tf
+from tensorflow.keras import Model
 
 from src.config import Config
 from src.prepare_data import create_data_generators
-from keras.applications.inception_v3 import InceptionV3
-from keras.layers import Dense
-import tensorflow as tf
-import keras
+from tensorflow.keras.applications.inception_v3 import InceptionV3
+from tensorflow.keras.layers import Dense
 import numpy as np
 
 cfg = Config()

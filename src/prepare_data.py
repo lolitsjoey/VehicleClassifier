@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 import cv2
-from keras.utils import to_categorical
+from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
 from PIL import Image
 
