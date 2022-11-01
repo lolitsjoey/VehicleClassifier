@@ -37,10 +37,10 @@ if __name__ == '__main__':
     custom_model = classify_build_conv()
     inceptionv3 = derived_from_inception_model()
 
-    models_to_train = [custom_model, inceptionv3]
+    models_to_train = [inceptionv3, custom_model]
 
-    for model, model_name in zip(models_to_train, ['custom', 'inception']):
-        training_history = model.fit(train_generator, validation_data=val_generator, shuffle=False, verbose=1, epochs=25,
+    for model, model_name in zip(models_to_train, ['inception', 'custom']):
+        training_history = model.fit(train_generator, validation_data=val_generator, shuffle=False, verbose=1, epochs=10,
                                      use_multiprocessing=False)
 
         train_generator, val_generator, test_generator = create_data_generators(cfg, augment=False)

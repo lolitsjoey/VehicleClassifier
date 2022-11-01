@@ -21,17 +21,18 @@ def classify_build_conv():
 
     model = Model(inputs=input, outputs=output)
     model.compile(loss=tensorflow.keras.losses.BinaryCrossentropy(),
-                  optimizer=tensorflow.keras.optimizers.Adam(learning_rate=0.000001),
+                  optimizer=tensorflow.keras.optimizers.Adam(learning_rate=0.00001),
                   metrics=['accuracy'])
     return model
 
 
 def derived_from_inception_model():
     base_model = InceptionV3(weights='imagenet', include_top=True)
-    output1 = Dense(32, activation='relu')(base_model.output)
-    output4 = Dense(1, activation='sigmoid')(output1)
+    output1 = Dense(256, activation='relu')(base_model.output)
+    output2 = Dense(32, activation='relu')(output1)
+    output4 = Dense(1, activation='sigmoid')(output2)
     model = Model(inputs=base_model.input, outputs=output4, name='vehicle_classifier')
     model.compile(loss=tensorflow.keras.losses.BinaryCrossentropy(),
-                  optimizer=tensorflow.keras.optimizers.Adam(learning_rate=0.0001),
+                  optimizer=tensorflow.keras.optimizers.Adam(learning_rate=0.01),
                   metrics=['accuracy'])
     return model
