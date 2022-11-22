@@ -57,9 +57,9 @@ class ScaleIntensities:
         return tensor
 
 
-def make_transform(is_train=True):
-    inception_sz_resize = 299
-    inception_sz_crop = 299
+def make_transform(is_train, config):
+    inception_sz_resize = config.im_dim
+    inception_sz_crop = config.im_dim
     inception_mean = [104, 117, 128]
     inception_std = [1, 1, 1]
     inception_transform = transforms.Compose(
@@ -68,9 +68,8 @@ def make_transform(is_train=True):
             transforms.RandomResizedCrop(inception_sz_crop) if is_train else Identity(),
             transforms.RandomHorizontalFlip() if is_train else Identity(),
             transforms.Resize(inception_sz_resize),
-            # transforms.CenterCrop(inception_sz_crop) if not is_train else Identity(),
+            transforms.CenterCrop(inception_sz_crop) if not is_train else Identity(),
             transforms.ToTensor(),
-            ScaleIntensities([0, 1], [0, 255]),
             transforms.Normalize(mean=inception_mean, std=inception_std)
         ])
     return inception_transform

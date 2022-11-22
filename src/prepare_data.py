@@ -1,16 +1,21 @@
 import os
 import shutil
+from itertools import chain
+import random
 from urllib.request import urlopen
 from zipfile import ZipFile
 import pandas as pd
 import numpy as np
 import tensorflow as tf
 import cv2
+import torch
 from sklearn.model_selection import train_test_split
 from PIL import Image
 import albumentations as aug
+from tensorflow.python.keras.utils.np_utils import to_categorical
+import matplotlib.pyplot as plt
 
-from src.augmentation import make_transform
+from src.augmentation import make_transform, ScaleIntensities
 from src.config import Config
 cfg = Config()
 
@@ -41,8 +46,6 @@ class DataDownloader:
             self.download_and_extract()
 
         data = self.tidy_data()
-        data = data.groupby('truth_label').apply(lambda x: x.sample(data.truth_label.value_counts().min()))
-        data = data.reset_index(drop=True)
 
         train_and_test, val = train_test_split(data, test_size=0.1)
         train, test = train_test_split(train_and_test, test_size=1/9)
@@ -73,7 +76,7 @@ class DataDownloader:
         test_labels  = pd.read_csv(f'{self.config.extract_path}/Labels/CSV Format/test_labels.csv')
         total_labels = pd.concat([train_labels, test_labels])
     
-        remove_unnecessary_columns(total_labels, ['xmin', 'ymin', 'xmax', 'ymax'])
+        remove_unnecessary_columns(total_labels, [])
 
         total_labels['file_exists'] = [True if self._image_exists(lab) else False for lab in total_labels['filename']]
         total_labels['truth_label'] = [1 if 'military' in row else 0 for row in total_labels['class']]
@@ -105,19 +108,48 @@ def cv2_augment():
     return transform
 
 
+def get_batch_idxs(filenames, hf_bz, index):
+    a = (index * hf_bz) % len(filenames)
+    b = ((index + 1) * hf_bz) % len(filenames)
+
+    if a > b:
+        return chain(range(a, len(filenames)), range(b))
+    return range(a, b)
+
+
+def plot_batch_images(batch_images, batch_ys, batch_filenames):
+    for image, y, filename in zip(batch_images, batch_ys, batch_filenames):
+        flat = image.ravel()
+        fig, axes = plt.subplots(2)
+        axes[0].imshow(image)
+        axes[1].imshow(ScaleIntensities([np.min(image[:, :, 0]), np.max(image[:, :, 0])], [0, 255])(image[:, :, 0]).astype(np.int32))
+        plt.suptitle(f'{y}  -  {filename}')
+        plt.show()
+
+
+def shuffle(batch_images, batch_filenames, batch_ys):
+    zipped = list(zip(batch_images, batch_filenames, batch_ys))
+    random.shuffle(zipped)
+    return [list(i) for i in zip(*zipped)]
+
+
 class DataGenerator(tf.keras.utils.Sequence):
     'Generates data for Keras'
-    def __init__(self, data, config, batch_size=32, augment=True):
+    def __init__(self, data, config, augment=True):
         'Initialization'
-        self.batch_size = batch_size
+        self.batch_size = config.batch_size
         self.config = config
+        self.data = data
         self.filenames, self.ys = extract_labels_and_filenames(data)
 
         if augment:
             self.filenames = list(self.filenames)*config.augmentation_fac
             self.ys = list(self.ys) * config.augmentation_fac
 
-        self.transform = make_transform(augment)
+        self.filenames_class0 = [filename for idx, filename in enumerate(self.filenames) if self.ys[idx] == 0]
+        self.filenames_class1 = [filename for idx, filename in enumerate(self.filenames) if self.ys[idx] == 1]
+
+        self.transform = make_transform(augment, config)
 
     def __len__(self):
         'Denotes the number of batches per epoch'
@@ -126,23 +158,31 @@ class DataGenerator(tf.keras.utils.Sequence):
     def __getitem__(self, index):
         'Generate one batch of data'
         # Generate indexes of the batch
-        batch_ys        = self.ys[index*self.batch_size:(index+1)*self.batch_size]
-        batch_filenames = self.filenames[index*self.batch_size:(index+1)*self.batch_size]
+        hf_bz = int(self.batch_size // 2)
+        batch_ys        = [0] * hf_bz + [1] * hf_bz
+        batch_filenames = [self.filenames_class0[i] for i in get_batch_idxs(self.filenames_class0, hf_bz, index)]\
+                        + [self.filenames_class1[i] for i in get_batch_idxs(self.filenames_class1, hf_bz, index)]
         batch_images = [self.preprocess_image(name) for name in batch_filenames]
 
-        return np.array(batch_images), np.array(batch_ys).astype('float32')
+        batch_images, batch_filenames, batch_ys = shuffle(batch_images, batch_filenames, batch_ys)
+        plot_batch_images(batch_images, batch_ys, batch_filenames)
+        return np.array(batch_images), np.array(to_categorical(batch_ys)).astype('float32')
 
     def preprocess_image(self, name):
         image = cv2.imread(f'{self.config.extract_path}/Images/{name}')
         aug_object = cv2_augment()
         transformed_image = aug_object(image=image)['image']
 
-        processed_image = self.pytorch_transforms(transformed_image)
+        bbox = self.data.loc[self.data.filename == name, ['xmin', 'xmax', 'ymin', 'ymax']].values[0]
+
+        processed_image = self.pytorch_transforms(transformed_image, bbox)
         return cv2.resize(processed_image, (self.config.im_dim, self.config.im_dim))
 
-    def pytorch_transforms(self, transformed_image):
+    def pytorch_transforms(self, transformed_image, bbox):
         image = Image.fromarray(transformed_image)
+
         processed_image = self.transform(image)
+
         processed_image = processed_image.cpu().detach().numpy()
         processed_image = np.moveaxis(processed_image, 0, -1)
         return processed_image
@@ -151,7 +191,7 @@ class DataGenerator(tf.keras.utils.Sequence):
 def create_data_generators(cfg, augment=True):
     dataloader = DataDownloader(cfg)
 
-    train_generator = DataGenerator(dataloader.train, cfg, 32, augment=True if augment else False)
-    val_generator   = DataGenerator(dataloader.val, cfg, 32, augment=True if augment else False)
-    test_generator  = DataGenerator(dataloader.test, cfg, 32, augment=False)
+    train_generator = DataGenerator(dataloader.train, cfg, augment=True if augment else False)
+    val_generator   = DataGenerator(dataloader.val, cfg, augment=True if augment else False)
+    test_generator  = DataGenerator(dataloader.test, cfg, augment=False)
     return train_generator, val_generator, test_generator
